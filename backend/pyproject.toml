@@ -1,0 +1,37 @@
+[project]
+name = "data-agent-backend"
+version = "0.1.0"
+description = "DeepSeek Data Analysis Agent with LangGraph"
+requires-python = ">=3.10"
+dependencies = [
+    "langgraph>=1.0.0",
+    "langchain>=1.0.0",
+    "langchain-ollama",
+    "langchain-openai",
+    "langchain-mcp-adapters>=0.1.7",
+    "langchain-deepseek",
+    "langserve",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "sse-starlette",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "python-dotenv",
+    "pydantic",
+    "redis>=5.0.0",
+    "pymysql>=1.1.1",
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy",
+]
+
+[tool.uv]
+default-groups = ["dev"]

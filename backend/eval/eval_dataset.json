@@ -1,0 +1,145 @@
+{
+  "description": "DataAgent RAG 检索质量评测集 —— 20 道问答，覆盖精确匹配、语义改写、跨文档、否定式问题等场景",
+  "questions": [
+    {
+      "id": 1,
+      "query": "P0故障的响应时间是多少？",
+      "expected_sources": ["客服知识库-故障分级与SLA.md"],
+      "expected_keywords": ["10分钟", "30分钟"],
+      "type": "exact"
+    },
+    {
+      "id": 2,
+      "query": "如果服务出了非常严重的问题，需要多快处理？",
+      "expected_sources": ["客服知识库-故障分级与SLA.md"],
+      "expected_keywords": ["P0", "10分钟"],
+      "type": "paraphrase"
+    },
+    {
+      "id": 3,
+      "query": "新购7天内可以退款吗？",
+      "expected_sources": ["客服知识库-退款政策.md"],
+      "expected_keywords": ["7天", "无理由退款"],
+      "type": "exact"
+    },
+    {
+      "id": 4,
+      "query": "买了一个月后还能申请退款吗？",
+      "expected_sources": ["客服知识库-退款政策.md"],
+      "expected_keywords": ["30天", "P0", "比例退款"],
+      "type": "paraphrase"
+    },
+    {
+      "id": 5,
+      "query": "年付套餐中途降配怎么办？",
+      "expected_sources": ["客服知识库-退款政策.md"],
+      "expected_keywords": ["延长服务周期", "补偿"],
+      "type": "exact"
+    },
+    {
+      "id": 6,
+      "query": "登录失败多少次会被锁定？",
+      "expected_sources": ["客服知识库-账户与安全规范.md"],
+      "expected_keywords": ["5次", "30分钟"],
+      "type": "exact"
+    },
+    {
+      "id": 7,
+      "query": "普通客服能导出客户手机号吗？",
+      "expected_sources": ["客服知识库-账户与安全规范.md"],
+      "expected_keywords": ["不可导出", "敏感字段", "脱敏"],
+      "type": "exact"
+    },
+    {
+      "id": 8,
+      "query": "密码重置链接多久过期？",
+      "expected_sources": ["客服知识库-账户与安全规范.md"],
+      "expected_keywords": ["15分钟"],
+      "type": "exact"
+    },
+    {
+      "id": 9,
+      "query": "VIP客户的工单怎么分配？",
+      "expected_sources": ["客服知识库-产品功能与使用指南.md"],
+      "expected_keywords": ["VIP", "高级客服", "优先"],
+      "type": "exact"
+    },
+    {
+      "id": 10,
+      "query": "工单超时未处理会怎样？",
+      "expected_sources": ["客服知识库-产品功能与使用指南.md"],
+      "expected_keywords": ["48小时", "自动升级", "组长"],
+      "type": "paraphrase"
+    },
+    {
+      "id": 11,
+      "query": "满意度评分低于多少会告警？",
+      "expected_sources": ["客服知识库-产品功能与使用指南.md"],
+      "expected_keywords": ["85%", "预警"],
+      "type": "exact"
+    },
+    {
+      "id": 12,
+      "query": "数据泄露后多久必须上报？",
+      "expected_sources": ["客服知识库-数据隐私与合规.md"],
+      "expected_keywords": ["2小时", "安全团队"],
+      "type": "exact"
+    },
+    {
+      "id": 13,
+      "query": "客户数据保存多长时间？",
+      "expected_sources": ["客服知识库-数据隐私与合规.md"],
+      "expected_keywords": ["6个月", "自动清理"],
+      "type": "paraphrase"
+    },
+    {
+      "id": 14,
+      "query": "海外员工怎么访问国内系统？",
+      "expected_sources": ["客服知识库-数据隐私与合规.md"],
+      "expected_keywords": ["VPN", "堡垒机", "禁止本地缓存"],
+      "type": "exact"
+    },
+    {
+      "id": 15,
+      "query": "员工离职后账号怎么处理？",
+      "expected_sources": ["客服知识库-数据隐私与合规.md"],
+      "expected_keywords": ["禁用", "30天", "永久删除"],
+      "type": "exact"
+    },
+    {
+      "id": 16,
+      "query": "故障结束后需要做什么？",
+      "expected_sources": ["客服知识库-故障分级与SLA.md"],
+      "expected_keywords": ["RCA", "根因分析", "24小时"],
+      "type": "paraphrase"
+    },
+    {
+      "id": 17,
+      "query": "工单可以转给别人吗？",
+      "expected_sources": ["客服知识库-产品功能与使用指南.md"],
+      "expected_keywords": ["转派", "原因", "通知客户"],
+      "type": "exact"
+    },
+    {
+      "id": 18,
+      "query": "哪些操作需要二次确认？",
+      "expected_sources": ["客服知识库-账户与安全规范.md"],
+      "expected_keywords": ["导出客户明细", "批量删除", "审计日志"],
+      "type": "paraphrase"
+    },
+    {
+      "id": 19,
+      "query": "退款需要经过哪些流程？",
+      "expected_sources": ["客服知识库-退款政策.md"],
+      "expected_keywords": ["工单", "初审", "财务", "原路退回"],
+      "type": "exact"
+    },
+    {
+      "id": 20,
+      "query": "客户要求停止营销后多久生效？",
+      "expected_sources": ["客服知识库-账户与安全规范.md"],
+      "expected_keywords": ["24小时", "屏蔽"],
+      "type": "exact"
+    }
+  ]
+}

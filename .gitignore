@@ -1,0 +1,44 @@
+# ===== 虚拟环境 =====
+.venv/
+backend/.venv/
+venv/
+env/
+
+# ===== 前端依赖 =====
+node_modules/
+dist/
+.next/
+
+# ===== IDE / 编辑器 =====
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ===== Claude Code =====
+.claude/
+
+# ===== 敏感文件 =====
+*.pdf
+.env
+!.env.example
+INTERVIEW_GUIDE.md
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 临时数据 / 自动生成 =====
+temp_data/
+chroma_db/
+vector_index.json
+*.log
