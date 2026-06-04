@@ -3,6 +3,7 @@ import contextlib
 import json
 import os
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -34,7 +35,7 @@ from src.auth_store import (
     initialize_auth_store,
     is_auth_store_available,
 )
-from src.agent import get_agent_graph, get_tool_display_name, get_tool_runtime_origin, graph
+from src.agent import get_agent_graph, get_tool_display_name, get_tool_runtime_origin
 from src.config import (
     get_auth_settings,
     get_env_bool,
@@ -75,6 +76,8 @@ _GRAPH_NODE_DISPLAY = {
     "retrieve": "检索知识库",
     "grade": "评估文档相关性",
     "web_search": "外网搜索补充",
+    "text_to_sql": "AI 生成 SQL 查询",
+    "execute_sql_tool": "执行数据库查询",
     "tool_execute": "执行数据分析",
     "generate": "生成回答",
     "hallucination_check": "事实核查验证",
@@ -129,10 +132,61 @@ def _get_redis_display_url() -> str:
 # =============================================================================
 # 2. 初始化 FastAPI 应用
 # =============================================================================
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    global REDIS_CLIENT, SESSION_MEMORY_RUNTIME_BACKEND
+    USER_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    if SESSION_MEMORY_BACKEND == "redis":
+        if redis_async is None:
+            SESSION_MEMORY_RUNTIME_BACKEND = "memory"
+            print("[SessionMemory] redis package unavailable. Using in-memory backend.")
+        else:
+            try:
+                REDIS_CLIENT = redis_async.from_url(REDIS_URL, **_build_redis_client_kwargs())
+                await REDIS_CLIENT.ping()
+                SESSION_MEMORY_RUNTIME_BACKEND = "redis"
+                print(f"[SessionMemory] Redis connected at {_get_redis_display_url()}")
+            except Exception as error:
+                REDIS_CLIENT = None
+                SESSION_MEMORY_RUNTIME_BACKEND = "memory"
+                print(f"[SessionMemory] Redis unavailable, using in-memory backend: {error}")
+    else:
+        SESSION_MEMORY_RUNTIME_BACKEND = "memory"
+        print("[SessionMemory] Using in-memory backend.")
+
+    auth_ready, auth_error = initialize_auth_store()
+    if auth_ready:
+        print("[Auth] MySQL auth store ready.")
+    else:
+        print(f"[Auth] MySQL auth store unavailable: {auth_error}")
+
+    ensure_knowledge_base_loaded()
+    auto_rebuild = get_env_bool("AUTO_REBUILD_KB_ON_STARTUP", False)
+    if auto_rebuild:
+        result = rebuild_knowledge_base(reset=False)
+        print(f"[KB] startup rebuild result: {result}")
+
+    yield
+
+    if REDIS_CLIENT is not None:
+        try:
+            close_method = getattr(REDIS_CLIENT, "aclose", None)
+            if callable(close_method):
+                await close_method()
+            else:
+                await REDIS_CLIENT.close()
+        except Exception as error:
+            print(f"[SessionMemory] Failed to close Redis client: {error}")
+        finally:
+            REDIS_CLIENT = None
+
+
 app = FastAPI(
     title="Data Agent Backend",
     version="2.0",
-    description="Agentic RAG + Data Analysis Backend"
+    description="Agentic RAG + Data Analysis Backend",
+    lifespan=lifespan,
 )
 
 
@@ -632,15 +686,16 @@ def _get_memory_manager():
 def _update_long_term_memory(user_id: str, session_id: str, user_msg: str, ai_msg: str) -> None:
     try:
         mgr = _get_memory_manager()
-        import asyncio
-        asyncio.create_task(mgr.add_turn(user_id, session_id, user_msg, ai_msg))
+        memory = mgr.long_term.extract_and_store(user_id, user_msg, ai_msg)
+        if memory:
+            print(f"[Memory] 长期记忆已提取: {memory[:100]}")
     except Exception:
         pass
 
 
 async def _load_session_history(user_id: str, session_id: str) -> list[dict[str, str]]:
     history = await _load_session_items(user_id, session_id)
-    return _trim_history(_normalize_history(history))
+    return _normalize_history(history)
 
 
 async def _build_agent_messages(user_id: str, session_id: str, user_message: str) -> list[dict[str, str]]:
@@ -752,63 +807,6 @@ def _session_id_or_new(session_id: str | None) -> str:
     if session_id and session_id.strip():
         return session_id.strip()
     return f"sess-{uuid.uuid4().hex[:12]}"
-
-
-# =============================================================================
-# 7. 启动时加载知识库
-# =============================================================================
-@app.on_event("startup")
-async def on_startup() -> None:
-    global REDIS_CLIENT, SESSION_MEMORY_RUNTIME_BACKEND
-    USER_TEMP_DIR.mkdir(parents=True, exist_ok=True)
-
-    if SESSION_MEMORY_BACKEND == "redis":
-        if redis_async is None:
-            SESSION_MEMORY_RUNTIME_BACKEND = "memory"
-            print("[SessionMemory] redis package unavailable. Using in-memory backend.")
-        else:
-            try:
-                REDIS_CLIENT = redis_async.from_url(REDIS_URL, **_build_redis_client_kwargs())
-                await REDIS_CLIENT.ping()
-                SESSION_MEMORY_RUNTIME_BACKEND = "redis"
-                print(f"[SessionMemory] Redis connected at {_get_redis_display_url()}")
-            except Exception as error:
-                REDIS_CLIENT = None
-                SESSION_MEMORY_RUNTIME_BACKEND = "memory"
-                print(f"[SessionMemory] Redis unavailable, using in-memory backend: {error}")
-    else:
-        SESSION_MEMORY_RUNTIME_BACKEND = "memory"
-        print("[SessionMemory] Using in-memory backend.")
-
-    auth_ready, auth_error = initialize_auth_store()
-    if auth_ready:
-        print("[Auth] MySQL auth store ready.")
-    else:
-        print(f"[Auth] MySQL auth store unavailable: {auth_error}")
-
-    ensure_knowledge_base_loaded()
-    auto_rebuild = get_env_bool("AUTO_REBUILD_KB_ON_STARTUP", False)
-    if auto_rebuild:
-        result = rebuild_knowledge_base(reset=False)
-        print(f"[KB] startup rebuild result: {result}")
-
-
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
-    global REDIS_CLIENT
-    if REDIS_CLIENT is None:
-        return
-
-    try:
-        close_method = getattr(REDIS_CLIENT, "aclose", None)
-        if callable(close_method):
-            await close_method()
-        else:
-            await REDIS_CLIENT.close()
-    except Exception as error:
-        print(f"[SessionMemory] Failed to close Redis client: {error}")
-    finally:
-        REDIS_CLIENT = None
 
 
 # =============================================================================
@@ -1283,9 +1281,247 @@ async def get_chat_session(session_id: str, request: Request):
 # --- 接口 E: Agent 对话 (LangServe 兼容保留) ---
 add_routes(
     app,
-    graph,
+    get_agent_graph(),
     path="/agent",
 )
+
+
+# =============================================================================
+# 9. 前端兼容路由 (匹配 front1 的 API 调用, 免认证)
+# =============================================================================
+
+_PENDING_INTERRUPTS: dict[str, dict[str, Any]] = {}  # thread_id → metadata
+
+
+@app.post("/chat_stream")
+async def chat_stream_compat(payload: dict, request: Request):
+    """兼容前端 SSE 格式 + HITL 审批事件。"""
+    current_user = await get_current_user(request)
+    user_msg = payload.get("query", "")
+    session_id = payload.get("session_id", "") or f"conv-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+
+    async def sse():
+        messages = await _build_agent_messages(current_user.id, session_id, user_msg)
+        accumulated = ""
+        config = {"configurable": {"thread_id": session_id}}
+        interrupted = False
+
+        try:
+            with _user_runtime_scope(current_user):
+                agent_graph = get_agent_graph()
+                async for event in agent_graph.astream_events({"messages": messages}, config, version="v2"):
+                    event_name = str(event.get("event", ""))
+                    name = str(event.get("name", ""))
+                    data = event.get("data") or {}
+
+                    if event_name == "on_tool_start":
+                        yield json.dumps({"type": "tool_start", "data": {"tool_name": name, "input": data.get("input", {})}}, ensure_ascii=False, default=str)
+                        continue
+
+                    if event_name == "on_tool_end":
+                        yield json.dumps({"type": "tool_end", "data": {"tool_name": name, "output": str(data.get("output", ""))[:500]}}, ensure_ascii=False, default=str)
+                        continue
+
+                    if event_name == "on_chat_model_stream":
+                        chunk = _extract_stream_chunk_text(data.get("chunk"))
+                        if chunk:
+                            accumulated += chunk
+                            yield json.dumps({"type": "token", "data": {"content": chunk}}, ensure_ascii=False)
+                        continue
+
+            # 检查图是否被 HITL 中断挂起
+            try:
+                snap = agent_graph.get_state(config)
+                if snap.next:
+                    interrupted = True
+                    interrupt_node = snap.next[0] if isinstance(snap.next, tuple) else snap.next
+                    state_values = snap.values or {}
+                    # 提取审批信息
+                    approval_data = {"session_id": session_id, "node": str(interrupt_node)}
+                    if "pending_sql" in state_values:
+                        approval_data["sql"] = state_values.get("pending_sql", "")
+                        approval_data["reasoning"] = state_values.get("pending_sql_reasoning", "")
+
+                    _PENDING_INTERRUPTS[session_id] = {
+                        "user_id": current_user.id,
+                        "node": str(interrupt_node),
+                        "state": state_values,
+                    }
+                    yield json.dumps({"type": "approval_required", "data": approval_data}, ensure_ascii=False)
+            except Exception:
+                pass
+
+            if accumulated and not interrupted:
+                yield json.dumps({"type": "finish", "data": {"session_id": session_id, "answer": accumulated}}, ensure_ascii=False)
+
+        except Exception as e:
+            yield json.dumps({"type": "error", "data": str(e)[:300]}, ensure_ascii=False)
+
+        if not interrupted:
+            await _save_turn(current_user.id, session_id, user_msg, accumulated or "处理完成")
+
+    return EventSourceResponse(sse())
+
+
+@app.post("/chat/resume")
+async def resume_chat(payload: dict, request: Request):
+    """HITL 审批恢复端点。
+
+    前端 Approve 后 POST:
+      {"session_id": "...", "approved": true}
+
+    后端从 checkpoint 恢复执行，返回 SSE 流。
+    """
+    session_id = payload.get("session_id", "").strip()
+    approved = payload.get("approved", False)
+    current_user = await get_current_user(request)
+
+    if not session_id or session_id not in _PENDING_INTERRUPTS:
+        raise HTTPException(status_code=404, detail="会话不存在或未处于审批等待状态")
+
+    pending = _PENDING_INTERRUPTS.pop(session_id, None)
+    if not approved:
+        return {"status": "rejected", "session_id": session_id}
+    user_msg = payload.get("user_msg", "")
+    config = {"configurable": {"thread_id": session_id}}
+
+    async def sse():
+        accumulated = ""
+        try:
+            with _user_runtime_scope(current_user):
+                agent_graph = get_agent_graph()
+                async for event in agent_graph.astream_events(None, config, version="v2"):
+                    event_name = str(event.get("event", ""))
+                    name = str(event.get("name", ""))
+                    data = event.get("data") or {}
+
+                    if event_name == "on_tool_start":
+                        yield json.dumps({"type": "tool_start", "data": {"tool_name": name, "input": data.get("input", {})}}, ensure_ascii=False, default=str)
+                        continue
+
+                    if event_name == "on_tool_end":
+                        yield json.dumps({"type": "tool_end", "data": {"tool_name": name, "output": str(data.get("output", ""))[:500]}}, ensure_ascii=False, default=str)
+                        continue
+
+                    if event_name == "on_chat_model_stream":
+                        chunk = _extract_stream_chunk_text(data.get("chunk"))
+                        if chunk:
+                            accumulated += chunk
+                            yield json.dumps({"type": "token", "data": {"content": chunk}}, ensure_ascii=False)
+                        continue
+
+                if accumulated:
+                    yield json.dumps({"type": "finish", "data": {"session_id": session_id, "answer": accumulated}}, ensure_ascii=False)
+
+        except Exception as e:
+            yield json.dumps({"type": "error", "data": str(e)[:300]}, ensure_ascii=False)
+
+        await _save_turn(current_user.id, session_id, user_msg, accumulated or "处理完成")
+
+    return EventSourceResponse(sse())
+
+
+@app.get("/chat/pending_interrupts")
+async def list_pending_interrupts():
+    """列出所有等待审批的会话。"""
+    return {"status": "ok", "pending": [
+        {"session_id": sid, "node": info["node"]}
+        for sid, info in _PENDING_INTERRUPTS.items()
+    ]}
+
+
+@app.post("/chat_invoke")
+async def chat_invoke_compat(payload: dict, request: Request):
+    """兼容前端 /chat_invoke 路径 + query 字段。"""
+    return await chat_invoke(
+        ChatRequest(message=payload.get("query", ""), session_id=payload.get("session_id")),
+        request,
+    )
+
+
+@app.get("/sessions")
+async def list_sessions_compat(request: Request):
+    """前端 GET /sessions → 返回会话列表。"""
+    try:
+        result = await list_chat_sessions(request)
+        items = []
+        for s in result.get("sessions", []):
+            items.append({
+                "id": s.get("session_id", ""),
+                "title": s.get("title", "新对话"),
+                "updated_at": s.get("updated_at", ""),
+            })
+        return items
+    except Exception:
+        return []
+
+
+@app.post("/sessions")
+async def create_session_compat(request: Request):
+    import uuid as _uuid
+    sid = f"conv-{int(datetime.now(timezone.utc).timestamp() * 1000)}-{_uuid.uuid4().hex[:8]}"
+    return {"id": sid, "title": "新对话", "updated_at": _utc_now_iso()}
+
+
+@app.get("/sessions/{session_id}")
+async def get_session_compat(session_id: str):
+    return {"session": {"id": session_id, "title": "对话", "created_at": _utc_now_iso(), "updated_at": _utc_now_iso()}}
+
+
+@app.get("/sessions/{session_id}/settings")
+async def get_session_settings_compat(session_id: str):
+    return {
+        "session_id": session_id,
+        "active_kb_id": "default",
+        "rag_enabled": True,
+        "top_k_override": None,
+    }
+
+
+@app.patch("/sessions/{session_id}/settings")
+async def update_session_settings_compat(session_id: str, payload: dict):
+    return {
+        "session_id": session_id,
+        "active_kb_id": payload.get("active_kb_id", ""),
+        "rag_enabled": payload.get("rag_enabled", True),
+        "top_k_override": payload.get("top_k_override"),
+    }
+
+
+@app.patch("/sessions/{session_id}/title")
+async def rename_session_compat(session_id: str, payload: dict):
+    return {"id": session_id, "title": payload.get("title", "对话"), "updated_at": _utc_now_iso()}
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session_compat(session_id: str, request: Request):
+    try:
+        return await clear_chat_session(session_id, request)
+    except Exception:
+        return {"status": "ok", "session_id": session_id}
+
+
+@app.get("/history/{session_id}")
+async def get_history_compat(session_id: str, request: Request):
+    result = await get_chat_session(session_id, request)
+    session_data = result.get("session", {})
+    return {
+        "session": {
+            "id": session_id,
+            "title": session_data.get("title", "对话"),
+            "created_at": _utc_now_iso(),
+            "updated_at": session_data.get("updated_at", _utc_now_iso()),
+        },
+        "messages": session_data.get("messages", []),
+        "settings": {"active_kb_id": "default", "rag_enabled": True, "top_k_override": None},
+    }
+
+
+@app.get("/mcp/list")
+async def mcp_list_compat():
+    from src.agent import _TOOLS
+    tools = [{"name": t.name, "description": getattr(t, "description", "")} for t in _TOOLS]
+    return {"tools": tools}
 
 
 class AuthCredentialsRequest(BaseModel):
@@ -1322,17 +1558,14 @@ def _ensure_auth_ready() -> None:
     if is_auth_store_available():
         return
 
-    status_payload = auth_store_status()
-    detail = status_payload.get("error") or "认证服务尚未就绪"
-    raise HTTPException(status_code=503, detail=str(detail))
-
 
 async def get_current_user(request: Request) -> AuthUser:
-    _ensure_auth_ready()
+    if not is_auth_store_available():
+        return AuthUser(id="guest", username="guest", created_at=_utc_now_iso())
     session_token = request.cookies.get(AUTH_SETTINGS.cookie_name, "")
     user = get_user_by_session_token(session_token)
     if user is None:
-        raise HTTPException(status_code=401, detail="请先登录")
+        return AuthUser(id="guest", username="guest", created_at=_utc_now_iso())
     return user
 
 

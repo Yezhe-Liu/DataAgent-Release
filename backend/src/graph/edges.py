@@ -8,9 +8,11 @@ from __future__ import annotations
 from typing import Literal
 
 
-def route_intent(state: dict) -> Literal["rewrite", "tool_execute", "generate"]:
+def route_intent(state: dict) -> Literal["rewrite", "tool_execute", "text_to_sql", "generate"]:
     """根据 router 分类结果分发到不同执行路径。"""
     intent = state.get("intent", "chat")
+    if intent == "structured_telecom_query":
+        return "text_to_sql"
     if intent == "rag":
         return "rewrite"
     if intent == "tool":

@@ -16,14 +16,17 @@ PolicyValue = str  # "always_ask" | "never" | "ask"
 
 DEFAULT_POLICY: dict[str, PolicyValue] = {
     "tool_execute": "always_ask",
-    "grade_all_irrelevant": "ask",
-    "hallucination_low": "ask",
+}
+
+# 逻辑中断点 → 实际 graph 节点映射
+# grade_all_irrelevant / hallucination_low 是条件式中断,
+# 不在 interrupt_before 中配置(会在节点内部通过 interrupt() 实现)
+_POLICY_TO_NODE: dict[str, str] = {
+    "tool_execute": "tool_execute",
 }
 
 _HITL_DISPLAY: dict[str, str] = {
     "tool_execute": "是否允许执行数据分析工具？",
-    "grade_all_irrelevant": "知识库未找到相关文档，是否联网搜索？",
-    "hallucination_low": "回答可信度较低，是否继续返回？",
 }
 
 
@@ -47,9 +50,13 @@ def get_hitl_policy() -> dict[str, str]:
 
 
 def get_interrupt_nodes() -> list[str]:
-    """返回需要配置 interrupt_before 的节点列表。"""
+    """返回需要配置 interrupt_before 的实际 graph 节点列表。"""
     policy = get_hitl_policy()
-    return [node for node, rule in policy.items() if rule != "never"]
+    nodes: list[str] = []
+    for key, rule in policy.items():
+        if rule != "never" and key in _POLICY_TO_NODE:
+            nodes.append(_POLICY_TO_NODE[key])
+    return nodes
 
 
 def should_interrupt(node_name: str, state: dict[str, Any]) -> bool:
@@ -70,15 +77,7 @@ def should_interrupt(node_name: str, state: dict[str, Any]) -> bool:
     if rule == "always_ask":
         return True
 
-    # rule == "ask": 根据状态动态判断
-    if node_name == "grade_all_irrelevant":
-        docs = state.get("graded_docs", [])
-        return not any(d.get("relevance") == "relevant" for d in docs)
-
-    if node_name == "hallucination_low":
-        score = state.get("hallucination_score", 1.0)
-        return score < 0.5
-
+    # rule == "ask": 根据状态动态判断 (未来可扩展)
     return True
 
 
@@ -95,8 +94,6 @@ def format_approval_event(node_name: str, state: dict[str, Any]) -> dict[str, An
         if msgs:
             last = msgs[-1]
             detail = getattr(last, "content", str(last))[:200]
-    elif node_name == "hallucination_low":
-        detail = state.get("hallucination_detail", "")
 
     return {
         "node": node_name,

@@ -35,6 +35,7 @@ def create_chat_model() -> BaseChatModel:
             api_key=settings.deepseek_api_key,
             api_base=settings.deepseek_base_url,
             max_tokens=settings.max_tokens,
+            extra_body={"thinking": {"type": "disabled"}},
         )
 
     if provider == "dashscope":

@@ -40,5 +40,8 @@ desktop.ini
 # ===== 临时数据 / 自动生成 =====
 temp_data/
 chroma_db/
+long_term_memory/
 vector_index.json
+*.db-shm
+*.db-wal
 *.log

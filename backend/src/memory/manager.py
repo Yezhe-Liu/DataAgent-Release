@@ -29,6 +29,8 @@ class MemoryManager:
             summary_trigger=max(8, max_messages // 2),
         )
         self.long_term = VectorMemory(persist_dir=persist_dir)
+        if model is not None:
+            self.long_term.set_model(model)
         self._session_buffers: dict[str, SummarizationBuffer] = {}
 
     async def add_turn(

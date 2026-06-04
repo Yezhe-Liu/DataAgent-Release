@@ -26,6 +26,8 @@ dependencies = [
     "sentence-transformers>=3.0.0",
     "grandalf>=0.8",
     "rank-bm25>=0.2.2",
+    "httpx[socks]>=0.28.1",
+    "psycopg2-binary>=2.9.12",
 ]
 
 [dependency-groups]

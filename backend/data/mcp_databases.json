@@ -1,0 +1,14 @@
+{
+  "databases": [
+    {
+      "tool_name": "query_telecom_weather_db",
+      "db_path": "backend/data/telecom_propagation.db",
+      "description": "查询电信气象传播数据库 (telecom_propagation.db)，包含全国 451 个城市的历史气象与无线信道数据。\n\n## 数据库表: city_climate_stats (城市气候统计)\n\n| 列名 | 类型 | 单位 | 说明 |\n|---|---|---|---|\n| city_code | TEXT (PK) | - | 城市行政区划编码 (GB/T 2260) |\n| city_pinyin | TEXT | - | 城市拼音 (如 \"beijing\") |\n| city_name | TEXT | - | 城市中文名称 (如 \"北京\") |\n| spring_pressure | REAL | hPa | 春季平均气压 |\n| summer_pressure | REAL | hPa | 夏季平均气压 |\n| autumn_pressure | REAL | hPa | 秋季平均气压 |\n| winter_pressure | REAL | hPa | 冬季平均气压 |\n| spring_temp | REAL | ℃ | 春季平均气温 |\n| summer_temp | REAL | ℃ | 夏季平均气温 |\n| autumn_temp | REAL | ℃ | 秋季平均气温 |\n| winter_temp | REAL | ℃ | 冬季平均气温 |\n| city_type | INTEGER | - | **城市类型: 0=内陆, 1=沿海, 2=海岛** |\n\n## city_type 枚举定义\n- 0 = 内陆城市 (Inland)\n- 1 = 沿海城市 (Coastal)\n- 2 = 海岛城市 (Island)\n\n## SQL 示例\n- 沿海城市夏季平均气温: SELECT AVG(summer_temp) FROM city_climate_stats WHERE city_type = 1\n- 最热的 10 个内陆城市: SELECT city_name, summer_temp FROM city_climate_stats WHERE city_type = 0 ORDER BY summer_temp DESC LIMIT 10\n- 海岛城市四季平均气温: SELECT AVG(spring_temp), AVG(summer_temp), AVG(autumn_temp), AVG(winter_temp) FROM city_climate_stats WHERE city_type = 2\n- 对比不同城市类型的气压: SELECT city_type, AVG(summer_pressure) FROM city_climate_stats GROUP BY city_type"
+    },
+    {
+      "tool_name": "query_enterprise_policy_db",
+      "db_path": "backend/data/enterprise_policy.db",
+      "description": "查询企业政策与合规数据库 (enterprise_policy.db)，包含企业管理制度、合规要求、部门规范等信息。\n\n## 数据库表\n\n### policies (企业政策)\n| 列名 | 类型 | 说明 |\n|---|---|---|\n| policy_id | INTEGER (PK) | 政策编号 |\n| title | TEXT | 政策标题 |\n| category | TEXT | 分类 (行政/人事/财务/技术/安全/合规) |\n| content | TEXT | 政策正文内容 |\n| department | TEXT | 发文部门 |\n| effective_date | TEXT | 生效日期 (YYYY-MM-DD) |\n| version | TEXT | 版本号 |\n\n### compliance_rules (合规规则)\n| 列名 | 类型 | 说明 |\n|---|---|---|\n| rule_id | INTEGER (PK) | 规则编号 |\n| rule_name | TEXT | 规则名称 |\n| category | TEXT | 合规分类 (数据隐私/安全审计/财务合规/劳动法规) |\n| description | TEXT | 规则描述 |\n| risk_level | TEXT | 风险等级 (低/中/高/严重) |\n| policy_id | INTEGER | 关联政策编号 (外键) |\n\n### departments (部门信息)\n| 列名 | 类型 | 说明 |\n|---|---|---|\n| dept_id | INTEGER (PK) | 部门编号 |\n| dept_name | TEXT | 部门名称 |\n| manager | TEXT | 负责人 |\n| headcount | INTEGER | 人员规模 |\n\n## SQL 示例\n- 查询所有安全类政策: SELECT title, department, effective_date FROM policies WHERE category = '安全'\n- 高风险合规规则: SELECT r.rule_name, r.description, p.title FROM compliance_rules r JOIN policies p ON r.policy_id = p.policy_id WHERE r.risk_level = '严重'\n- 各部门人员统计: SELECT dept_name, headcount FROM departments ORDER BY headcount DESC"
+    }
+  ]
+}

@@ -74,11 +74,15 @@ def get_agent_graph():
     from src.graph.builder import build_graph
     from src.hitl import get_interrupt_nodes
 
+    # 查找所有 MCP 数据库查询工具 (query_*)
+    _db_tools = [t for t in _TOOLS if getattr(t, "name", "").startswith("query_")]
+
     _GRAPH = build_graph(
         model=model,
         data_tools=_TOOLS,
         retrieve_func=retrieve_knowledge,
         search_func=external_search.invoke,
+        db_tools=_db_tools,
         interrupt_before=get_interrupt_nodes(),
     )
     _GRAPH_SIGNATURE = signature
