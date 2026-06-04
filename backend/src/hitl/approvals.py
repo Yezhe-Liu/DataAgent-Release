@@ -2,6 +2,11 @@
 
 提供可配置的中断策略和 LangGraph interrupt 配置生成。
 纯函数模块，不依赖项目其他模块。
+
+v2 架构说明:
+  - SQL HITL 由 builder.py 自动配置 supervisor_handoff (仅当 db_tools 存在时)
+  - tool_execute 已迁移到 ToolWorker 子图内部，其 HITL 由 ToolWorker 子图自行管理
+  - interrupt_before 只能引用主图层节点，子图内部节点会导致 LangGraph validate 报错
 """
 
 from __future__ import annotations
@@ -14,20 +19,16 @@ from src.config import get_env_text
 
 PolicyValue = str  # "always_ask" | "never" | "ask"
 
-DEFAULT_POLICY: dict[str, PolicyValue] = {
-    "tool_execute": "always_ask",
-}
+# v2 默认策略: 空。SQL HITL 由 supervisor_handoff 自动处理，tool_execute 已下沉到子图
+DEFAULT_POLICY: dict[str, PolicyValue] = {}
 
-# 逻辑中断点 → 实际 graph 节点映射
-# grade_all_irrelevant / hallucination_low 是条件式中断,
-# 不在 interrupt_before 中配置(会在节点内部通过 interrupt() 实现)
+# 逻辑中断点 → 实际主图层 graph 节点映射
+# 注意: 只能包含主图层 (SupervisorGraph) 节点，子图内部节点不在此配置
 _POLICY_TO_NODE: dict[str, str] = {
-    "tool_execute": "tool_execute",
+    # "tool_execute": "tool_execute",  # v2: 已下沉到 ToolWorker 子图内部
 }
 
-_HITL_DISPLAY: dict[str, str] = {
-    "tool_execute": "是否允许执行数据分析工具？",
-}
+_HITL_DISPLAY: dict[str, str] = {}
 
 
 # ---- Public API ----

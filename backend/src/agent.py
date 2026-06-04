@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 
 from src.config import get_chat_settings, get_env_text
-from src.llm_factory import create_chat_model
+from src.llm_factory import create_chat_model, create_flash_model, create_pro_model
 from src.mcp_tools import load_mcp_tools
 from src.rag_engine import retrieve_knowledge
 from src.tools import external_search, fig_inter, python_inter
@@ -46,30 +46,36 @@ print(f"[Agent] MCP status: {_MCP_STATUS}; total_tools={len(_TOOLS)}")
 
 # ---- 图缓存（模型变更时重建） ----
 _GRAPH = None
-_GRAPH_SIGNATURE: tuple[str, str] | None = None
+_GRAPH_SIGNATURE: tuple[str, str, str] | None = None  # (provider, flash_model, pro_model)
 
 
 def get_agent_graph():
-    """获取编译后的 Agentic RAG StateGraph（带模型变更检测缓存）。"""
+    """获取编译后的 Agentic RAG StateGraph（带模型变更检测缓存）。
+
+    双模型架构:
+      - flash_model: deepseek-v4-flash (thinking=disabled) → Router/Grade/Text-to-SQL/Rewrite
+      - pro_model:   deepseek-v4-pro  (thinking=enabled)  → Generate/HallucinationCheck
+    """
     global _GRAPH, _GRAPH_SIGNATURE
 
     chat_settings = get_chat_settings()
-    signature = (chat_settings.provider, chat_settings.model)
+    signature = (chat_settings.provider, chat_settings.model, chat_settings.model_pro)
 
     if _GRAPH is not None and _GRAPH_SIGNATURE == signature:
         return _GRAPH
 
-    model = create_chat_model()
-    print(f"[Agent] provider={chat_settings.provider} model={chat_settings.model}")
+    flash_model = create_flash_model()
+    pro_model = create_pro_model()
+    print(f"[Agent] provider={chat_settings.provider} flash={chat_settings.model} pro={chat_settings.model_pro}")
 
-    # 注入模型到 RAG 模块（用于 LLM Reranker / HyDE）
+    # 注入 flash 模型到 RAG 模块（HyDE / LLM Reranker 不需要深度推理）
     from src.rag_engine import set_rag_model
-    set_rag_model(model)
+    set_rag_model(flash_model)
 
-    # 注入模型到 MemoryManager（用于对话摘要）
+    # 注入 flash 模型到 MemoryManager（对话摘要 / 长期记忆提取）
     from src.memory.manager import MemoryManager
     if not hasattr(get_agent_graph, "_memory_manager"):
-        get_agent_graph._memory_manager = MemoryManager(model=model)  # type: ignore[attr-defined]
+        get_agent_graph._memory_manager = MemoryManager(model=flash_model)  # type: ignore[attr-defined]
 
     from src.graph.builder import build_graph
     from src.hitl import get_interrupt_nodes
@@ -78,7 +84,8 @@ def get_agent_graph():
     _db_tools = [t for t in _TOOLS if getattr(t, "name", "").startswith("query_")]
 
     _GRAPH = build_graph(
-        model=model,
+        flash_model=flash_model,
+        pro_model=pro_model,
         data_tools=_TOOLS,
         retrieve_func=retrieve_knowledge,
         search_func=external_search.invoke,

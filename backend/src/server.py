@@ -275,7 +275,20 @@ def _extract_stream_chunk_text(chunk: Any) -> str:
     content = getattr(chunk, "content", None)
     if isinstance(chunk, dict):
         content = chunk.get("content", content)
-    return _message_content_to_stream_text(content)
+
+    text = _message_content_to_stream_text(content)
+
+    # DeepSeek V4 Pro thinking 阶段: content 为空但 reasoning_content 有 token
+    # 不提取会导致前端流式卡顿（几秒无 token 输出）
+    if not text:
+        additional_kwargs = getattr(chunk, "additional_kwargs", None) or {}
+        if isinstance(chunk, dict):
+            additional_kwargs = chunk.get("additional_kwargs", additional_kwargs) or {}
+        reasoning = additional_kwargs.get("reasoning_content", "")
+        if reasoning:
+            text = str(reasoning)
+
+    return text
 
 
 def _extract_ai_message_text(payload: dict[str, Any]) -> str:
@@ -1290,7 +1303,13 @@ add_routes(
 # 9. 前端兼容路由 (匹配 front1 的 API 调用, 免认证)
 # =============================================================================
 
-_PENDING_INTERRUPTS: dict[str, dict[str, Any]] = {}  # thread_id → metadata
+# ---- HITL 审批持久化 (文件级原子写入, 服务器重启无损恢复) ----
+from src.hitl.persistence import get_persistence
+
+_hitl_persistence = get_persistence()
+
+# 向后兼容别名 (deprecated, 请使用 _hitl_persistence)
+_PENDING_INTERRUPTS: dict[str, dict[str, Any]] = {}  # 保留引用以兼容旧代码, 实际读写由 _hitl_persistence 管理
 
 
 @app.post("/chat_stream")
@@ -1342,11 +1361,11 @@ async def chat_stream_compat(payload: dict, request: Request):
                         approval_data["sql"] = state_values.get("pending_sql", "")
                         approval_data["reasoning"] = state_values.get("pending_sql_reasoning", "")
 
-                    _PENDING_INTERRUPTS[session_id] = {
-                        "user_id": current_user.id,
+                    _hitl_persistence.save(session_id, {
+                        "user_id": str(current_user.id),
                         "node": str(interrupt_node),
                         "state": state_values,
-                    }
+                    })
                     yield json.dumps({"type": "approval_required", "data": approval_data}, ensure_ascii=False)
             except Exception:
                 pass
@@ -1376,10 +1395,10 @@ async def resume_chat(payload: dict, request: Request):
     approved = payload.get("approved", False)
     current_user = await get_current_user(request)
 
-    if not session_id or session_id not in _PENDING_INTERRUPTS:
+    if not session_id or not _hitl_persistence.exists(session_id):
         raise HTTPException(status_code=404, detail="会话不存在或未处于审批等待状态")
 
-    pending = _PENDING_INTERRUPTS.pop(session_id, None)
+    pending = _hitl_persistence.remove(session_id)
     if not approved:
         return {"status": "rejected", "session_id": session_id}
     user_msg = payload.get("user_msg", "")
@@ -1423,11 +1442,8 @@ async def resume_chat(payload: dict, request: Request):
 
 @app.get("/chat/pending_interrupts")
 async def list_pending_interrupts():
-    """列出所有等待审批的会话。"""
-    return {"status": "ok", "pending": [
-        {"session_id": sid, "node": info["node"]}
-        for sid, info in _PENDING_INTERRUPTS.items()
-    ]}
+    """列出所有等待审批的会话 (从磁盘持久化存储读取)。"""
+    return {"status": "ok", "pending": _hitl_persistence.list_all()}
 
 
 @app.post("/chat_invoke")

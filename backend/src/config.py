@@ -12,7 +12,8 @@ load_dotenv(override=True)
 @dataclass(frozen=True)
 class ChatSettings:
     provider: str
-    model: str
+    model: str          # flash / 快速模型 (默认 deepseek-v4-flash)
+    model_pro: str      # pro / 强推理模型 (默认 deepseek-v4-pro)
     temperature: float
     max_tokens: int | None
     ollama_base_url: str
@@ -24,6 +25,7 @@ class ChatSettings:
     dashscope_base_url: str
     deepseek_api_key: str
     deepseek_base_url: str
+    vllm_base_url: str
 
 
 @dataclass(frozen=True)
@@ -117,6 +119,8 @@ def _normalize_provider(value: str | None, default: str = "deepseek") -> str:
         "qwen_cloud": "dashscope",
         "aliyun": "dashscope",
         "openai_compatible": "dashscope",
+        "vllm": "vllm",
+        "openai": "vllm",
     }
     return aliases.get(raw, raw)
 
@@ -124,15 +128,23 @@ def _normalize_provider(value: str | None, default: str = "deepseek") -> str:
 def get_chat_settings() -> ChatSettings:
     provider = _normalize_provider(os.getenv("CHAT_MODEL_PROVIDER"), default="deepseek")
     if provider == "deepseek":
-        default_model = "deepseek-chat"
+        default_model = "deepseek-v4-flash"
+        default_model_pro = "deepseek-v4-pro"
     elif provider == "dashscope":
         default_model = "qwen-plus"
+        default_model_pro = "qwen-max"
+    elif provider == "vllm":
+        default_model = os.getenv("VLLM_MODEL_NAME", "")
+        default_model_pro = os.getenv("VLLM_MODEL_PRO", default_model)
     else:
         default_model = "qwen3.5:2b"
+        default_model_pro = default_model
     model = get_env_text("CHAT_MODEL_NAME", default_model)
+    model_pro = get_env_text("CHAT_MODEL_PRO", default_model_pro)
     return ChatSettings(
         provider=provider,
         model=model,
+        model_pro=model_pro,
         temperature=_to_float(get_env_text("CHAT_TEMPERATURE", get_env_text("LLM_TEMPERATURE", "0")), 0.0),
         max_tokens=_to_optional_int(get_env_text("CHAT_MAX_TOKENS", "")),
         ollama_base_url=get_env_text("OLLAMA_BASE_URL", "http://localhost:11434"),
@@ -144,6 +156,7 @@ def get_chat_settings() -> ChatSettings:
         dashscope_base_url=get_env_text("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         deepseek_api_key=get_env_text("DEEPSEEK_API_KEY", ""),
         deepseek_base_url=get_env_text("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        vllm_base_url=get_env_text("VLLM_BASE_URL", "http://localhost:8000/v1"),
     )
 
 
@@ -192,10 +205,12 @@ def get_model_settings_summary() -> dict[str, str | int | float | bool | None]:
     return {
         "chat_provider": chat.provider,
         "chat_model": chat.model,
+        "chat_model_pro": chat.model_pro,
         "chat_temperature": chat.temperature,
         "chat_max_tokens": chat.max_tokens,
         "embedding_provider": embedding.provider,
         "embedding_model": embedding.model,
         "ollama_base_url": chat.ollama_base_url,
         "dashscope_base_url": chat.dashscope_base_url,
+        "vllm_base_url": chat.vllm_base_url,
     }
