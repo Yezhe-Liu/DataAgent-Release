@@ -68,8 +68,17 @@ STATIC_DIR = BASE_DIR / "static"
 IMAGES_DIR = STATIC_DIR / "images"
 
 MAX_SESSION_MESSAGES = get_env_int("MAX_SESSION_MESSAGES", 16)
-STREAM_CHUNK_SIZE = get_env_int("STREAM_CHUNK_SIZE", 24)
-STREAM_CHUNK_DELAY = get_env_float("STREAM_CHUNK_DELAY", 0.01)
+
+_GRAPH_NODE_DISPLAY = {
+    "router": "分析问题意图",
+    "rewrite": "多角度重写查询",
+    "retrieve": "检索知识库",
+    "grade": "评估文档相关性",
+    "web_search": "外网搜索补充",
+    "tool_execute": "执行数据分析",
+    "generate": "生成回答",
+    "hallucination_check": "事实核查验证",
+}
 SESSION_MEMORY_BACKEND = get_env_text("SESSION_MEMORY_BACKEND", "redis").lower()
 REDIS_URL = get_env_text("REDIS_URL", "redis://127.0.0.1:6379/0")
 REDIS_USERNAME = get_env_text("REDIS_USERNAME", "")
@@ -216,10 +225,15 @@ def _extract_stream_chunk_text(chunk: Any) -> str:
 
 
 def _extract_ai_message_text(payload: dict[str, Any]) -> str:
+    # 1. 优先从新 graph 的 generation 字段提取
+    generation = payload.get("generation")
+    if isinstance(generation, str) and generation.strip():
+        return generation.strip()
+
+    # 2. 从 messages 中提取 AI 消息
     candidate_arrays = [
         payload.get("messages"),
         payload.get("output", {}).get("messages") if isinstance(payload.get("output"), dict) else None,
-        payload.get("model", {}).get("messages") if isinstance(payload.get("model"), dict) else None,
     ]
 
     for messages in candidate_arrays:
@@ -682,13 +696,6 @@ def _build_fallback_answer(user_message: str, error: Exception) -> str:
     )
 
 
-def _split_stream_chunks(text: str, chunk_size: int = STREAM_CHUNK_SIZE) -> list[str]:
-    clean_text = text or ""
-    if not clean_text:
-        return [""]
-    return [clean_text[i:i + chunk_size] for i in range(0, len(clean_text), chunk_size)]
-
-
 async def _invoke_agent(messages: list[dict[str, str]]) -> dict[str, Any]:
     agent_graph = get_agent_graph()
     return await asyncio.to_thread(agent_graph.invoke, {"messages": messages})
@@ -959,6 +966,40 @@ async def chat_stream(payload: ChatRequest, request: Request):
                     data = event.get("data")
                     if not isinstance(data, dict):
                         data = {}
+
+                    if event_name == "on_chain_start":
+                        node_name = name
+                        if node_name in _GRAPH_NODE_DISPLAY:
+                            yield {
+                                "event": "status",
+                                "data": json.dumps(
+                                    _build_status_payload(
+                                        status_id=run_id,
+                                        scope="graph",
+                                        status="running",
+                                        title=_GRAPH_NODE_DISPLAY.get(node_name, node_name),
+                                    ),
+                                    ensure_ascii=False,
+                                ),
+                            }
+                        continue
+
+                    if event_name == "on_chain_end":
+                        node_name = name
+                        if node_name in _GRAPH_NODE_DISPLAY:
+                            yield {
+                                "event": "status",
+                                "data": json.dumps(
+                                    _build_status_payload(
+                                        status_id=run_id,
+                                        scope="graph",
+                                        status="success",
+                                        title=_GRAPH_NODE_DISPLAY.get(node_name, node_name) + " - 完成",
+                                    ),
+                                    ensure_ascii=False,
+                                ),
+                            }
+                        continue
 
                     if event_name == "on_tool_start":
                         tool_origin = get_tool_runtime_origin(name)

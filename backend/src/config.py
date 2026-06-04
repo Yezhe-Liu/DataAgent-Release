@@ -22,6 +22,8 @@ class ChatSettings:
     ollama_low_vram: bool
     dashscope_api_key: str
     dashscope_base_url: str
+    deepseek_api_key: str
+    deepseek_base_url: str
 
 
 @dataclass(frozen=True)
@@ -108,7 +110,7 @@ def _to_optional_int(value: str | None) -> int | None:
         return None
 
 
-def _normalize_provider(value: str | None, default: str = "ollama") -> str:
+def _normalize_provider(value: str | None, default: str = "deepseek") -> str:
     raw = (_clean_env_value(value) or default).strip().lower() or default
     aliases = {
         "qwen": "dashscope",
@@ -120,9 +122,13 @@ def _normalize_provider(value: str | None, default: str = "ollama") -> str:
 
 
 def get_chat_settings() -> ChatSettings:
-    provider = _normalize_provider(os.getenv("CHAT_MODEL_PROVIDER"), default="ollama")
-    legacy_model = get_env_text("OLLAMA_CHAT_MODEL", "qwen3.5:2b")
-    default_model = "qwen-plus" if provider == "dashscope" else legacy_model
+    provider = _normalize_provider(os.getenv("CHAT_MODEL_PROVIDER"), default="deepseek")
+    if provider == "deepseek":
+        default_model = "deepseek-chat"
+    elif provider == "dashscope":
+        default_model = "qwen-plus"
+    else:
+        default_model = "qwen3.5:2b"
     model = get_env_text("CHAT_MODEL_NAME", default_model)
     return ChatSettings(
         provider=provider,
@@ -136,13 +142,14 @@ def get_chat_settings() -> ChatSettings:
         ollama_low_vram=get_env_bool("OLLAMA_LOW_VRAM", True),
         dashscope_api_key=get_env_text("DASHSCOPE_API_KEY", ""),
         dashscope_base_url=get_env_text("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        deepseek_api_key=get_env_text("DEEPSEEK_API_KEY", ""),
+        deepseek_base_url=get_env_text("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
     )
 
 
 def get_embedding_settings() -> EmbeddingSettings:
     provider = _normalize_provider(os.getenv("EMBEDDING_PROVIDER"), default="ollama")
-    legacy_model = get_env_text("KB_EMBED_MODEL", "nomic-embed-text")
-    default_model = "text-embedding-v3" if provider == "dashscope" else legacy_model
+    default_model = "text-embedding-v3" if provider == "dashscope" else "nomic-embed-text"
     model = get_env_text("EMBEDDING_MODEL_NAME", default_model)
     return EmbeddingSettings(
         provider=provider,
