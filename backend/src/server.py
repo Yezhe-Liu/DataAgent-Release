@@ -619,14 +619,49 @@ def _normalize_session_messages(history: list[dict[str, Any]]) -> list[dict[str,
     return normalized
 
 
+def _get_memory_manager():
+    from src.agent import get_agent_graph
+    mgr = getattr(get_agent_graph, "_memory_manager", None)
+    if mgr is None:
+        from src.memory.manager import MemoryManager
+        mgr = MemoryManager()
+        get_agent_graph._memory_manager = mgr  # type: ignore[attr-defined]
+    return mgr
+
+
+def _update_long_term_memory(user_id: str, session_id: str, user_msg: str, ai_msg: str) -> None:
+    try:
+        mgr = _get_memory_manager()
+        import asyncio
+        asyncio.create_task(mgr.add_turn(user_id, session_id, user_msg, ai_msg))
+    except Exception:
+        pass
+
+
 async def _load_session_history(user_id: str, session_id: str) -> list[dict[str, str]]:
     history = await _load_session_items(user_id, session_id)
     return _trim_history(_normalize_history(history))
 
 
 async def _build_agent_messages(user_id: str, session_id: str, user_message: str) -> list[dict[str, str]]:
-    history = await _load_session_history(user_id, session_id)
-    return history + [{"type": "human", "content": user_message}]
+    raw = await _load_session_history(user_id, session_id)
+
+    # 通过 MemoryManager 做上下文增强 (摘要 + 长期记忆)
+    try:
+        mgr = _get_memory_manager()
+        ctx = mgr.get_context(user_id, session_id, user_message, history=raw)
+        result: list[dict[str, str]] = []
+        if ctx.summary:
+            result.append({"type": "system", "content": f"[对话历史摘要]\n{ctx.summary}"})
+        if ctx.long_term_hints:
+            result.append({"type": "system", "content": ctx.long_term_hints})
+        result.extend(ctx.history)
+        result.append({"type": "human", "content": user_message})
+        return result
+    except Exception:
+        pass
+
+    return raw + [{"type": "human", "content": user_message}]
 
 
 def _save_turn_in_memory(user_id: str, session_id: str, user_message: str, ai_message: str) -> None:
@@ -641,6 +676,8 @@ def _save_turn_in_memory(user_id: str, session_id: str, user_message: str, ai_me
     )
     SESSION_MEMORY[memory_key] = _trim_history(history)
     _save_session_summary_in_memory(user_id, session_id, user_message, ai_message)
+    # MemoryManager: 自动提取长期记忆
+    _update_long_term_memory(user_id, session_id, user_message, ai_message)
 
 
 async def _save_turn(user_id: str, session_id: str, user_message: str, ai_message: str) -> None:
@@ -970,6 +1007,8 @@ async def chat_stream(payload: ChatRequest, request: Request):
                     if event_name == "on_chain_start":
                         node_name = name
                         if node_name in _GRAPH_NODE_DISPLAY:
+                            from src.agent import get_tracer
+                            get_tracer().trace_node_start(node_name)
                             yield {
                                 "event": "status",
                                 "data": json.dumps(
@@ -987,6 +1026,8 @@ async def chat_stream(payload: ChatRequest, request: Request):
                     if event_name == "on_chain_end":
                         node_name = name
                         if node_name in _GRAPH_NODE_DISPLAY:
+                            from src.agent import get_tracer
+                            get_tracer().trace_node_end(run_id)
                             yield {
                                 "event": "status",
                                 "data": json.dumps(
@@ -1112,6 +1153,23 @@ async def chat_stream(payload: ChatRequest, request: Request):
             if not answer:
                 answer = "本次响应为空，请重试或缩短问题后再试。"
         except Exception as error:
+            # HITL: 检查是否为 GraphInterrupt（人工审批暂停）
+            error_type = type(error).__name__
+            error_module = type(error).__module__ or ""
+            if "interrupt" in error_type.lower() or "interrupt" in error_module.lower():
+                yield {
+                    "event": "approval_required",
+                    "data": json.dumps(
+                        {
+                            "session_id": session_id,
+                            "message": f"Agent 暂停等待人工确认: {error}",
+                            "node": "unknown",
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+                return
+
             fallback_used = True
             answer = _build_fallback_answer(payload.message, error)
             yield {

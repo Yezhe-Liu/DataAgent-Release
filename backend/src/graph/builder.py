@@ -35,14 +35,16 @@ def build_graph(
     data_tools: list[BaseTool],
     retrieve_func: Callable[..., list[Any]],
     search_func: Callable[..., str],
+    interrupt_before: list[str] | None = None,
 ):
     """构建 Agentic RAG StateGraph。
 
     Args:
-        model: 注入的 LLM 实例（由 llm_factory 创建）
+        model: 注入的 LLM 实例
         data_tools: 数据分析工具列表 [python_inter, fig_inter]
-        retrieve_func: 知识库检索函数（rag_engine.retrieve_knowledge）
-        search_func: 外网搜索函数（tools.external_search）
+        retrieve_func: 知识库检索函数
+        search_func: 外网搜索函数
+        interrupt_before: 需要 HITL 中断的节点列表 (如 ["tool_execute"])
     """
     workflow = StateGraph(AgentState)
 
@@ -84,4 +86,7 @@ def build_graph(
     workflow.add_edge("tool_execute", END)
 
     # 编译（MemorySaver 可在生产环境替换为 SqliteSaver）
-    return workflow.compile(checkpointer=MemorySaver())
+    compile_kwargs: dict = {"checkpointer": MemorySaver()}
+    if interrupt_before:
+        compile_kwargs["interrupt_before"] = interrupt_before
+    return workflow.compile(**compile_kwargs)

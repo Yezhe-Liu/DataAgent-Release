@@ -5,17 +5,37 @@
 2. 加载工具（本地 + MCP）
 3. 将依赖注入到自定义 StateGraph
 4. 对外暴露编译后的 graph 实例
+5. 初始化 Tracer / MemoryManager 等基础设施
 """
 
 from __future__ import annotations
 
 import asyncio
 
-from src.config import get_chat_settings
+from src.config import get_chat_settings, get_env_text
 from src.llm_factory import create_chat_model
 from src.mcp_tools import load_mcp_tools
 from src.rag_engine import retrieve_knowledge
 from src.tools import external_search, fig_inter, python_inter
+
+# ---- 全局 Tracer ----
+_TRACER = None
+
+
+def get_tracer():
+    global _TRACER
+    if _TRACER is None:
+        backend = get_env_text("TRACER_BACKEND", "console")
+        if backend == "langfuse":
+            from src.observability.langfuse import LangFuseTracer
+            _TRACER = LangFuseTracer()
+        elif backend == "console":
+            from src.observability.console import ConsoleTracer
+            _TRACER = ConsoleTracer()
+        else:
+            from src.observability.tracer import NoopTracer
+            _TRACER = NoopTracer()
+    return _TRACER
 
 # ---- 本地数据分析工具 ----
 DATA_TOOLS = [python_inter, fig_inter]
@@ -42,13 +62,24 @@ def get_agent_graph():
     model = create_chat_model()
     print(f"[Agent] provider={chat_settings.provider} model={chat_settings.model}")
 
+    # 注入模型到 RAG 模块（用于 LLM Reranker / HyDE）
+    from src.rag_engine import set_rag_model
+    set_rag_model(model)
+
+    # 注入模型到 MemoryManager（用于对话摘要）
+    from src.memory.manager import MemoryManager
+    if not hasattr(get_agent_graph, "_memory_manager"):
+        get_agent_graph._memory_manager = MemoryManager(model=model)  # type: ignore[attr-defined]
+
     from src.graph.builder import build_graph
+    from src.hitl import get_interrupt_nodes
 
     _GRAPH = build_graph(
         model=model,
         data_tools=_TOOLS,
         retrieve_func=retrieve_knowledge,
         search_func=external_search.invoke,
+        interrupt_before=get_interrupt_nodes(),
     )
     _GRAPH_SIGNATURE = signature
     return _GRAPH
